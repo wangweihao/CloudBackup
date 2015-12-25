@@ -73,11 +73,11 @@ WorkerServer::~WorkerServer()
  * 考虑断点续传问题
  * */
 bool 
-WorkerServer::handler_upload(int socket, std::string md5, unsigned long size, long offset, int threadNum)
+WorkerServer::handler_upload(int socket, std::string md5, long size, long offset, int threadNum)
 {
     int filefd;
-    unsigned long file_size = 0;
-    unsigned long accumu_size = 0;
+    long file_size = 0;
+    long accumu_size = 0;
     int pipefd[2];
     ssize_t ret = 0;
 
@@ -93,7 +93,7 @@ WorkerServer::handler_upload(int socket, std::string md5, unsigned long size, lo
     /* offset not equal zero, breakpoint upload */
     if(offset > 0)
     {
-        if(lseek(filefd, SEEK_CUR, offset) < 0)
+        if(lseek(filefd, offset, SEEK_CUR) < 0)
         {
             perror("lseek file error");
             return false;
@@ -137,11 +137,11 @@ WorkerServer::handler_upload(int socket, std::string md5, unsigned long size, lo
 }
 
 bool
-WorkerServer::handler_download(int socket, std::string md5, unsigned long size, long offset, int threadNum)
+WorkerServer::handler_download(int socket, std::string md5, long size, long offset, int threadNum)
 {
     int filefd;
-    unsigned long file_size = 0;
-    unsigned long accumu_size = 0;
+    long file_size = 0;
+    long accumu_size = 0;
     ssize_t ret = 0;
     struct stat file_state;
 
@@ -169,7 +169,7 @@ WorkerServer::handler_download(int socket, std::string md5, unsigned long size, 
     /* offset not equal zero, breakpoint download */
     if(offset > 0)
     {
-        if(lseek(filefd, SEEK_CUR, offset) < 0)
+        if(lseek(filefd, offset, SEEK_CUR) < 0)
         {
             perror("lseek file error");
             return false;
@@ -202,15 +202,66 @@ WorkerServer::handler_download(int socket, std::string md5, unsigned long size, 
  * 加入到任务队列中，
  * 由多个线程处理*/
 bool 
-WorkerServer::multi_thread_download(int socket, std::string md5, unsigned long size, long offset, int threadNum)
+WorkerServer::multi_thread_download(int socket, std::string md5, long size, long offset, int threadNum)
 {
-    /* detect thread num */
-    for(int i = 0; i < threadNum; ++i)
+    struct stat file_state;
+    
+    /* if file size equal zero, obtain file size */
+    if(size == 0)
     {
-        handler_download(socket, md5, size, offset, 0);
+        if(stat(md5.c_str(), &file_state))
+        {
+            perror("obtain file size error");
+            return false;
+        }
+        size = file_state.st_size;   
     }
 
+    /* detect thread num */
+    long one_size = size/threadNum;
+    
+    /* block download */
+    for(int i = 0; i < threadNum-1; ++i)
+    {
+        Handler handler = std::make_tuple(WorkerServer::file_block_download, socket, md5, (one_size*i), (one_size*(i+1)), 0);
+        threadpool.AddTask(std::move(handler));
+        
+    }
+    /* 最后一块文件大小需要特殊处理 */
+    Handler handler = std::make_tuple(WorkerServer::file_block_download, socket, md5, (one_size*(threadNum-1)), size, 0);
+    threadpool.AddTask(std::move(handler));
+
     return true;
+}
+
+bool 
+WorkerServer::file_block_download(int socket, std::string md5, long start, long end, int flag)
+{
+    int filefd;
+    long block_size = end - start;
+    ssize_t ret;
+    
+    /* open file */
+    if((filefd = open(md5.c_str(), O_RDONLY)) < 0)
+    {
+        perror("file open error");
+        return false;
+    }
+
+
+    if((ret = sendfile(socket, filefd, &start, block_size)) < 0)
+    {
+        perror("sendfile error");
+        return false;
+    }
+
+    if(ret == block_size)
+    {
+        std::cout << "sendfile success" << std::endl;
+    }else{
+        std::cout << "sendfile error" << std::endl;
+        return false;
+    }
 }
 
 void
