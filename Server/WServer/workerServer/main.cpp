@@ -10,6 +10,8 @@
 
 struct event_base* WorkerServer::base = event_base_new();
 ThreadPool WorkerServer::threadpool(50);
+std::mutex WorkerServer::g_lock;
+std::map<std::string, int> WorkerServer::unfinished_file;
 
 int main(int argc, char **argv){
     if(argc < 4)

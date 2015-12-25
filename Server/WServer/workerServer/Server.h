@@ -13,6 +13,8 @@
 /* C++ header */
 #include <iostream>
 #include <string>
+#include <map>
+#include <mutex>
 
 /* C   header*/
 #include <stdio.h>
@@ -47,7 +49,7 @@ class WorkerServer{
         /* init function */
         WorkerServer(std::string w_ip, int w_port, std::string b_ip, int b_port);
 
-        /* realise resourse */
+        /* free resourse */
         ~WorkerServer();
 
     public:
@@ -55,17 +57,20 @@ class WorkerServer{
 
     public:
         /* file upload    (breakpoint upload)*/
-        static bool handler_upload(int socket, std::string md5, unsigned long size, long offset, int threadNum);
+        static bool handler_upload(int socket, std::string md5, long size, long offset, int threadNum);
         /* file download  (breakpoint download)*/
-        static bool handler_download(int socket, std::string md5, unsigned long size, long offset, int threadNum);
+        static bool handler_download(int socket, std::string md5, long size, long offset, int threadNum);
         /* multi thread download */
-        static bool multi_thread_download(int socket, std::string md5, unsigned long size, long offset, int threadNum);
+        static bool multi_thread_download(int socket, std::string md5, long size, long offset, int threadNum);
+        /* file block download */
+        static bool file_block_download(int socket, std::string md5, long start, long end, int threadNum);
 
     private:
         /* event callback */
         static void error_callback(evutil_socket_t socket, short event, void* arg);
         static void read_callback(evutil_socket_t socket, short event, void* arg);
         static void accept_callback(evutil_socket_t listen_fd, short event, void* arg);
+        static void timeout_callback(evutil_socket_t socket, short event, void* arg);
 
     private:    
         /* WorkerServer ip and port */
@@ -83,9 +88,13 @@ class WorkerServer{
 
         static struct event_base *base;
 
+        static std::mutex g_lock;
+
     private:
         /* help */
         static ThreadPool threadpool;
+        /* save unfinished file transfer */
+        static std::map<std::string, int> unfinished_file;
 };
 
 bool detect_paramenter_correct(int, std::string, unsigned long, unsigned long, int);

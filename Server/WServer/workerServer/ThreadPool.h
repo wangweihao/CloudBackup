@@ -25,8 +25,8 @@
 #include <tuple>
 
 /* 上传下载函数需要socketfd和MD5值 */
-using Task = std::function<bool(int, std::string, unsigned long, unsigned long, int)>;
-using Handler = std::tuple<Task, int, std::string, unsigned long, unsigned long, int>;
+using Task = std::function<bool(int, std::string, long, long, int)>;
+using Handler = std::tuple<Task, int, std::string, long, long, int>;
 
 /* 默认线程任务队列大小 */
 const int MaxTaskCount = 100;

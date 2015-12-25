@@ -122,14 +122,32 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
         accumu_size += ret;
     }
 
+    /* lots of user operating unfinished_file */
+    std::lock_guard<std::mutex> locker(g_lock);
+
     if(accumu_size == file_size)
     {
         std::cout << "upload file success" << std::endl;
+        /* file transfer success, delete unfinished file*/
+        auto iter = unfinished_file.find(md5);
+        if(iter != unfinished_file.end())
+        {
+            unfinished_file.erase(iter);             
+        }
     }else{
         std::cout << "upload file error" << std::endl;
         /* 断点续传，用户未上传成功，设置定时事件，
          * 若用户在给定时间内没有断点续传，则触发定时事件，
          * 删除服务器本地的文件 */
+
+        /* 先考虑某一时刻只有一个用户上传此文件 */
+        unfinished_file.insert(std::make_pair(md5, 1));
+
+        /* 设置定时事件 */
+        struct timeval tv = {300, 0};
+        struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
+        event_add(timeout_event, &tv);
+
         return false;
     }
 
@@ -187,9 +205,6 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
         std::cout << "sendfile success" << std::endl;
     }else{
         std::cout << "sendfile error" << std::endl;
-        /* 断点续传，用户未上传成功，设置定时事件，
-         * 若用户在给定时间内没有断点续传，则触发定时事件，
-         * 删除服务器本地的文件 */
         return false;
     }
 
@@ -380,6 +395,32 @@ WorkerServer::error_callback(evutil_socket_t socket, short event, void *arg)
 {
     std::cout << "error_callaback" << std::endl;
     sleep(1);
+}
+
+
+/* 定时器回调函数
+ * 若用户上传文件中断开连接
+ * 服务器则设定定时保存该文件
+ * 若用户长时间未断点续传
+ * 超时删除未完成上传的文件*/
+void
+WorkerServer::timeout_callback(evutil_socket_t socket, short event, void* arg)
+{
+    std::map<std::string, int>::iterator iter;
+    std::string md5((char*)arg);
+    /* 尽快释放锁，减小粒度 */
+    {
+        std::lock_guard<std::mutex> locker(g_lock);
+        iter = unfinished_file.find(md5);
+    }
+    if(iter == unfinished_file.end())
+    {
+        return;
+    }else{
+        unfinished_file.erase(iter);
+        /* 用户超时，删除未完成上传的文件 */
+        remove(md5.c_str());
+    }
 }
 
 bool detect_paramenter_correct(int mark, std::string md5, unsigned long size, unsigned long offset, int threadNum)
