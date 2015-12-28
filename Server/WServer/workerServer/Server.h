@@ -72,6 +72,10 @@ class WorkerServer{
         static void accept_callback(evutil_socket_t listen_fd, short event, void* arg);
         static void timeout_callback(evutil_socket_t socket, short event, void* arg);
 
+        /* alloc fd struct */
+        static struct fd_state* alloc_fd_state(struct event_base *base, evutil_socket_t fd);
+        static void free_fd_state(struct fd_state* state);
+
     private:    
         /* WorkerServer ip and port */
         std::string ip;

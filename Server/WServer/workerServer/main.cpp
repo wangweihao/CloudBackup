@@ -7,6 +7,7 @@
  =======================================================*/
 
 #include "Server.h"
+#include <signal.h>
 
 struct event_base* WorkerServer::base = event_base_new();
 ThreadPool WorkerServer::threadpool(50);

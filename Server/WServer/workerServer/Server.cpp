@@ -9,6 +9,42 @@
 #include "Server.h"
 
 
+struct fd_state{
+    int fd;
+    short length;
+
+    struct event *read_event;
+    struct event *write_event;
+};
+
+struct fd_state*
+WorkerServer::
+alloc_fd_state(struct event_base *base, evutil_socket_t fd)
+{
+    std::cout << "hello world" << std::endl;
+    struct fd_state *state = (struct fd_state*)malloc(sizeof(struct fd_state));
+    if(state == NULL)
+    {
+        return NULL;
+    }
+    state->read_event = event_new(base, fd, EV_READ | EV_PERSIST, read_callback, state);
+    if(state->read_event == NULL)
+    {
+        free(state);
+    }
+    std::cout << "hello world" << std::endl;
+    return state;
+}
+
+void
+WorkerServer::
+free_fd_state(struct fd_state* state)
+{
+    event_free(state->read_event);
+    free(state);
+}
+
+
 WorkerServer::
 WorkerServer(std::string w_ip, int w_port, std::string b_ip, int b_port):ip(w_ip), port(w_port)
 {
@@ -47,6 +83,9 @@ WorkerServer(std::string w_ip, int w_port, std::string b_ip, int b_port):ip(w_ip
         exit(1);
     }
 
+    int reuse = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+
     /* new accept event */
     accept_event = event_new(base, listen_fd, EV_READ | EV_PERSIST, accept_callback, (void*)base);
 
@@ -64,7 +103,7 @@ WorkerServer::run()
 
 WorkerServer::~WorkerServer()
 {
-
+    close(listen_fd);
 }
 
 
@@ -75,17 +114,22 @@ WorkerServer::~WorkerServer()
 bool 
 WorkerServer::handler_upload(int socket, std::string md5, long size, long offset, int threadNum)
 {
+    std::cout << "+++++++++++++++++++++++++" << std::endl;
+    std::cout << "handler_upload" << std::endl;
+    std::cout << "+++++++++++++++++++++++++" << std::endl;
+    
     int filefd;
     long file_size = 0;
     long accumu_size = 0;
     int pipefd[2];
     ssize_t ret = 0;
 
+
     /* file size */
     file_size = size - offset;
 
     /* open file*/
-    if((filefd = open(md5.c_str(), O_WRONLY | O_CREAT)) < 0)
+    if((filefd = open(md5.c_str(), O_WRONLY | O_CREAT, 00777)) < 0)
     {
         perror("open file error");
         return false;
@@ -106,50 +150,81 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
         return false;
     }
     /* upload file */
+ //   char buffer[200];
+ //   recv(socket, buffer, 200, 0);
+ //   printf("%s\n", buffer);
+    
+    char buf[2048];
+    int r;
     while(1)
     {
-        if((ret = splice(socket, NULL, pipefd[1], NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
-            perror("socket ==> pipefd[1] splice error");
+        bzero(buf, 2048);
+        if((r = recv(socket, buf, 2048, 0)) == -1)
+        {
+            perror("recv error");
             break;
-        }else if(ret == 0)
+        }else if(r == 0)
         {
             break;
+        }else{
+            write(filefd, buf, sizeof(buf));
         }
-        if((ret = splice(pipefd[0], NULL, filefd, NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
-            perror("pipe[0] ==> file splice error");
-            break;
-        }
-        accumu_size += ret;
     }
+
+ //   while(1)
+ //   {
+ //       if((ret = splice(socket, NULL, pipefd[1], NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
+ //           printf("errno:%d\n", errno);
+ //           if(errno == EAGAIN)
+ //           {
+ //               break;
+ //           }
+ //           perror("socket ==> pipefd[1] splice error");
+ //           break;
+ //       }else if(ret == 0)
+ //       {
+ //           break;
+ //       }
+ //       if((ret = splice(pipefd[0], NULL, filefd, NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
+ //           printf("errno:%d\n", errno);
+ //           if(errno == EAGAIN)
+ //           {
+ //               break;
+ //           }
+ //           perror("pipe[0] ==> file splice error");
+ //           break;
+ //       }
+ //       accumu_size += ret;
+ //   }
 
     /* lots of user operating unfinished_file */
-    std::lock_guard<std::mutex> locker(g_lock);
+ //   std::lock_guard<std::mutex> locker(g_lock);
 
-    if(accumu_size == file_size)
-    {
-        std::cout << "upload file success" << std::endl;
-        /* file transfer success, delete unfinished file*/
-        auto iter = unfinished_file.find(md5);
-        if(iter != unfinished_file.end())
-        {
-            unfinished_file.erase(iter);             
-        }
-    }else{
-        std::cout << "upload file error" << std::endl;
-        /* 断点续传，用户未上传成功，设置定时事件，
-         * 若用户在给定时间内没有断点续传，则触发定时事件，
-         * 删除服务器本地的文件 */
+ //   if(accumu_size == file_size)
+ //   {
+ //       std::cout << "upload file success" << std::endl;
+ //       /* file transfer success, delete unfinished file*/
+ //       auto iter = unfinished_file.find(md5);
+ //       if(iter != unfinished_file.end())
+ //       {
+ //           unfinished_file.erase(iter);             
+ //       }
+ //   }else{
+ //       std::cout << "upload file error" << std::endl;
+ //       /* 断点续传，用户未上传成功，设置定时事件，
+ //        * 若用户在给定时间内没有断点续传，则触发定时事件，
+ //        * 删除服务器本地的文件 */
 
-        /* 先考虑某一时刻只有一个用户上传此文件 */
-        unfinished_file.insert(std::make_pair(md5, 1));
+ //       /* 先考虑某一时刻只有一个用户上传此文件 */
+ //       unfinished_file.insert(std::make_pair(md5, 1));
 
-        /* 设置定时事件 */
-        struct timeval tv = {300, 0};
-        struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
-        event_add(timeout_event, &tv);
+ //       /* 设置定时事件 */
+ //       struct timeval tv = {300, 0};
+ //       struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
+ //       event_add(timeout_event, &tv);
 
-        return false;
-    }
+ //       return false;
+ //   }
 
     return true;
 }
@@ -157,6 +232,10 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
 bool
 WorkerServer::handler_download(int socket, std::string md5, long size, long offset, int threadNum)
 {
+    std::cout << "+++++++++++++++++++++++++" << std::endl;
+    std::cout << "handler_download" << std::endl;
+    std::cout << "+++++++++++++++++++++++++" << std::endl;
+ 
     int filefd;
     long file_size = 0;
     long accumu_size = 0;
@@ -203,6 +282,14 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
     if(ret == file_size)
     {
         std::cout << "sendfile success" << std::endl;
+        
+        /*
+         * 过早关闭 socket 
+         * 当客户端意外结束时，退出事件（触发 EPOLL_IN）无法处理
+         * 导致下一个用户（socket 值和上一个相同）复用上一个用户
+         * socket，结果两次连接触发一次事件。
+         * close(socket);
+         * */
     }else{
         std::cout << "sendfile error" << std::endl;
         return false;
@@ -291,23 +378,34 @@ WorkerServer::accept_callback(evutil_socket_t listen_fd, short event, void* arg)
     int fd = accept(listen_fd, (struct sockaddr*)&client, &length);
     if(fd < 0)
     {
+        if(errno == EAGAIN || errno == EWOULDBLOCK){
+            std::cout << "errno" << std::endl;
+            close(fd);
+            return;
+        }
         perror("accept error");
         return;
     }else{
-        struct bufferevent *bev;   
+        std::cout << "new event" << std::endl;
+        struct fd_state *state;
         evutil_make_socket_nonblocking(fd);
-        read_event  = event_new(base, fd, EV_READ  | EV_PERSIST, read_callback,  (void*)base);
-        event_add(read_event, 0);
+        state = alloc_fd_state(base, fd);   
+        event_add(state->read_event, 0);
+        std::cout << "fd:" << fd << std::endl;
+        std::cout << "new event.." << std::endl;
     }
 }
 
 void 
 WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
 {
+    struct fd_state* state = (struct fd_state*)(arg);
     std::cout << "read callback" << std::endl;
+    
     /* recv json and return ack then download */
     char *buffer;
-    char jsonMsgLen[2];
+    char jsonMsgLen[3];
+    short bufferlength;
     Json::Reader reader;
     Json::Value  value;
 
@@ -323,7 +421,6 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     int threadNum = 0;
 
 
-
     /* recv request (json)*/
     /*
      * Json:
@@ -336,19 +433,46 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
      * }
      * */
     /* 先接收 2 字节 json 长度，接着接收 json 串 */
-    recv(socket, jsonMsgLen, 2, 0);
+    int ret = recv(socket, jsonMsgLen, 2, MSG_WAITALL);
+    if(ret < 0)
+    {
+        if(errno == EAGAIN && errno == EWOULDBLOCK)
+        {
+            std::cout << "recv errno" << std::endl;
+            free_fd_state(state);
+            close(socket);
+            return;
+        }
+    }else if(ret == 0)
+    {
+        free_fd_state(state);
+        return;
+    }else{
+        bufferlength |= (jsonMsgLen[0] << 8);
+        bufferlength |= jsonMsgLen[1];
+        printf("bufferlength:%d\n", bufferlength);
+    }
     //short bufferLength = parse(jsonMsgLen);
-    short bufferlength = 10;
         
     buffer = (char*)malloc(sizeof(char) * bufferlength);
-    /* 即使设置 MSG_WAITALL 标识，不代表能接收 bufferlength 长度的数据包，需自己判定 */
-    if(recv(socket, buffer, bufferlength, MSG_WAITALL) == bufferlength)
+    if(buffer == NULL)
     {
-        printf("%s\n", buffer);
+        perror("malloc error");
+        return;
+    }
+    /* 即使设置 MSG_WAITALL 标识，不代表能接收 bufferlength 长度的数据包，需自己判定 */
+    int recvnum;
+    if((recvnum = recv(socket, buffer, bufferlength, MSG_WAITALL)) == bufferlength)
+    {
+        printf("buffer:%s\n", buffer);
+        printf("recvnum:%d\n", recvnum);
     }else{
+        free_fd_state(state);
+        printf("recv return:%d\n", bufferlength);
         return;
     }
 
+    printf("recv success\n");
     /* parse json */
     if(reader.parse(buffer, value))
     {
@@ -359,15 +483,20 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
             size = value["size"].asLargestUInt();
             offset = value["offset"].asLargestUInt();
             threadNum = value["threadNum"].asInt();
-
+            std::cout << "mark:" << mark << std::endl;
+            std::cout << "md5:" << md5 << std::endl;
+            std::cout << "size:" << size << std::endl;
+            std::cout << "offset:" << offset << std::endl;
+            std::cout << "threadNum:" << threadNum << std::endl;
+  
             if(detect_paramenter_correct(mark, md5, size, offset, threadNum) == false){
                 perror("detect parament correct error");
                 return;
             }
-
+  
             /* create handle event */
             Handler handle_event;
-
+  
             /* parse mark, handler event */
             switch(mark){
                 case 1:
@@ -380,13 +509,15 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
                     break;
                 case 3:
                     multi_thread_download(socket, md5, size, offset, threadNum);
-                    handle_event = std::make_tuple(WorkerServer::multi_thread_download, socket, md5, size, offset, threadNum);
-                    threadpool.AddTask(std::move(handle_event));
                     break;
                 default:
-                    break;
+                  break;
             }
         }
+    }
+    if(buffer != NULL)
+    {
+        free(buffer);   
     }
 }
 
@@ -418,7 +549,7 @@ WorkerServer::timeout_callback(evutil_socket_t socket, short event, void* arg)
         return;
     }else{
         unfinished_file.erase(iter);
-        /* 用户超时，删除未完成上传的文件 */
+        /* 用户操作超时，删除未完成上传的文件 */
         remove(md5.c_str());
     }
 }
