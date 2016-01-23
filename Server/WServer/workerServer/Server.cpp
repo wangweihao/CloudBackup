@@ -114,9 +114,7 @@ WorkerServer::~WorkerServer()
 bool 
 WorkerServer::handler_upload(int socket, std::string md5, long size, long offset, int threadNum)
 {
-    std::cout << "+++++++++++++++++++++++++" << std::endl;
     std::cout << "handler_upload" << std::endl;
-    std::cout << "+++++++++++++++++++++++++" << std::endl;
     
     int filefd;
     long file_size = 0;
@@ -124,6 +122,7 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
     int pipefd[2];
     ssize_t ret = 0;
 
+    md5 += "new";
 
     /* file size */
     file_size = size - offset;
@@ -149,53 +148,32 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
         perror("create pipe error");
         return false;
     }
-    /* upload file */
- //   char buffer[200];
- //   recv(socket, buffer, 200, 0);
- //   printf("%s\n", buffer);
     
-    char buf[2048];
-    int r;
     while(1)
     {
-        bzero(buf, 2048);
-        if((r = recv(socket, buf, 2048, 0)) == -1)
-        {
-            perror("recv error");
+        if((ret = splice(socket, NULL, pipefd[1], NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
+            printf("errno:%d\n", errno);
+            if(errno == EAGAIN)
+            {
+                break;
+            }
+            perror("socket ==> pipefd[1] splice error");
             break;
-        }else if(r == 0)
+        }else if(ret == 0)
         {
             break;
-        }else{
-            write(filefd, buf, sizeof(buf));
         }
+        if((ret = splice(pipefd[0], NULL, filefd, NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
+            printf("errno:%d\n", errno);
+            if(errno == EAGAIN)
+            {
+                break;
+            }
+            perror("pipe[0] ==> file splice error");
+            break;
+        }
+        accumu_size += ret;
     }
-
- //   while(1)
- //   {
- //       if((ret = splice(socket, NULL, pipefd[1], NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
- //           printf("errno:%d\n", errno);
- //           if(errno == EAGAIN)
- //           {
- //               break;
- //           }
- //           perror("socket ==> pipefd[1] splice error");
- //           break;
- //       }else if(ret == 0)
- //       {
- //           break;
- //       }
- //       if((ret = splice(pipefd[0], NULL, filefd, NULL, 32768, SPLICE_F_MORE | SPLICE_F_MOVE)) == -1){
- //           printf("errno:%d\n", errno);
- //           if(errno == EAGAIN)
- //           {
- //               break;
- //           }
- //           perror("pipe[0] ==> file splice error");
- //           break;
- //       }
- //       accumu_size += ret;
- //   }
 
     /* lots of user operating unfinished_file */
  //   std::lock_guard<std::mutex> locker(g_lock);
@@ -232,9 +210,7 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
 bool
 WorkerServer::handler_download(int socket, std::string md5, long size, long offset, int threadNum)
 {
-    std::cout << "+++++++++++++++++++++++++" << std::endl;
     std::cout << "handler_download" << std::endl;
-    std::cout << "+++++++++++++++++++++++++" << std::endl;
  
     int filefd;
     long file_size = 0;
@@ -243,7 +219,7 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
     struct stat file_state;
 
     /* open file */
-    if((filefd = open(md5.c_str(), O_RDONLY)) < 0)
+    if((filefd = open(md5.c_str(), O_RDONLY, 777)) < 0)
     {
         perror("file open error");
         return false;
@@ -263,6 +239,7 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
     /* file size */
     file_size = size - offset;
 
+    std::cout << file_size << std::endl;
     /* offset not equal zero, breakpoint download */
     if(offset > 0)
     {
@@ -292,6 +269,7 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
          * */
     }else{
         std::cout << "sendfile error" << std::endl;
+        std::cout << ret << std::endl;
         return false;
     }
 
@@ -404,8 +382,7 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     
     /* recv json and return ack then download */
     char *buffer;
-    char jsonMsgLen[3];
-    short bufferlength;
+    char jsonMsgLen[2];
     Json::Reader reader;
     Json::Value  value;
 
@@ -419,6 +396,8 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     unsigned long size = 0;
     unsigned long offset = 0;
     int threadNum = 0;
+    
+    union Len len;
 
 
     /* recv request (json)*/
@@ -448,31 +427,31 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
         free_fd_state(state);
         return;
     }else{
-        bufferlength |= (jsonMsgLen[0] << 8);
-        bufferlength |= jsonMsgLen[1];
-        printf("bufferlength:%d\n", bufferlength);
+        len.length = 0;
+        len.c[0] = jsonMsgLen[0];
+        len.c[1] = jsonMsgLen[1];
+        printf("%c\n", len.c[0]);
+        printf("%c\n", len.c[1]);
+        printf("bufferlength:%d\n", len.length);
     }
-    //short bufferLength = parse(jsonMsgLen);
-        
-    buffer = (char*)malloc(sizeof(char) * bufferlength);
-    if(buffer == NULL)
+    if((buffer = (char*)malloc(sizeof(char) * len.length)) == NULL)
     {
         perror("malloc error");
         return;
     }
     /* 即使设置 MSG_WAITALL 标识，不代表能接收 bufferlength 长度的数据包，需自己判定 */
     int recvnum;
-    if((recvnum = recv(socket, buffer, bufferlength, MSG_WAITALL)) == bufferlength)
+    if((recvnum = recv(socket, buffer, len.length, MSG_WAITALL)) == len.length)
     {
         printf("buffer:%s\n", buffer);
         printf("recvnum:%d\n", recvnum);
+        event_del(state->read_event);
     }else{
         free_fd_state(state);
-        printf("recv return:%d\n", bufferlength);
+        printf("recv return:%d\n", len.length);
         return;
     }
 
-    printf("recv success\n");
     /* parse json */
     if(reader.parse(buffer, value))
     {
