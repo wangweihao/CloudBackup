@@ -26,26 +26,32 @@
 /* redis header */
 #include <hiredis/hiredis.h>
 
+#define SEC 3
+#define USEC 0
+
 class timer{
     public:
         timer(const char *redisIp, int port = 6379);
         ~timer();
 
-        void run();
-        bool addTimeEvent(struct event* time_event, struct timeval tv);
-        bool delTimeEvent(struct event* time_event);
+        static void run();
+        static bool addTimeEvent(struct event* time_event, struct timeval tv);
+        static bool delTimeEvent(struct event* time_event);
+        
+        /* obtain disk and net info */
+        static void sendInfoToRedis(evutil_socket_t fd, short event, void* arg);
+        static int getDiskStat();
+        static int getNetStat();
 
-    public:
+    private:
         /* redis */
-        struct timeval timeout = {2, 0};
-        redisContext *myRedisContext;
+        static redisContext *myRedisContext;
+        
         /* libevent loop */
-        struct event_base *timebase;
+        static struct event *time_event;
+        static struct event_base *timebase;
 };
 
 
-void sendInfoToRedis(evutil_socket_t fd, short event, void* arg);
-int getDiskStat();
-int getNetStat();
 
 #endif

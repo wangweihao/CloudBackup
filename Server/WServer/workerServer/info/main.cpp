@@ -9,12 +9,12 @@
 
 #include "Timer.h"
 
+struct event* timer::time_event = NULL;
+struct event_base* timer::timebase = NULL;
+redisContext* timer::myRedisContext = NULL;
+
 int main()
 {
     timer t("127.0.0.1");
-    struct event* timeout;
-    struct timeval tv = {3, 0};
-    timeout = evtimer_new(t.timebase, sendInfoToRedis, t.myRedisContext);
-    t.addTimeEvent(timeout, tv);
     t.run();
 }

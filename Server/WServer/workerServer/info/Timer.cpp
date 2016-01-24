@@ -11,9 +11,9 @@
 
 timer::timer(const char *redisIp, int port)
 {
+    timeval tv = {SEC, USEC};
     timebase = event_base_new();
-    std::cout << redisIp << " " << port << std::endl;
-    myRedisContext = (redisContext*)redisConnectWithTimeout(redisIp, port, timeout);
+    myRedisContext = (redisContext*)redisConnectWithTimeout(redisIp, port, tv);
     if((myRedisContext == NULL) || (myRedisContext->err))
     {
         if(myRedisContext)
@@ -23,12 +23,15 @@ timer::timer(const char *redisIp, int port)
             std::cout << "connect error: can't allocate redis context" << std::endl;
         }
     }
+    time_event = evtimer_new(timebase, sendInfoToRedis, myRedisContext);
+    if(evtimer_add(time_event, &tv) < 0)
+    {
+        perror("time event add error");
+        exit(1);
+    }
 }
 
-timer::~timer()
-{
-
-}
+timer::~timer() {}
 
 void 
 timer::run()
@@ -59,19 +62,22 @@ timer::delTimeEvent(struct event* time_event)
 }
 
 
-void sendInfoToRedis(evutil_socket_t fd, short event, void* arg)
+void 
+timer::sendInfoToRedis(evutil_socket_t fd, short event, void* arg)
 {
-    redisContext *redis = (redisContext*)arg;
-   
+    timeval tv = {SEC, USEC};
     int diskInfo = getDiskStat();
     int netInfo  = getNetStat();
 
-    redisReply *reply = (redisReply*)redisCommand(redis, "INFO");
+    redisReply *reply = (redisReply*)redisCommand(myRedisContext, "INFO");
     std::cout << reply->str << std::endl;
 
+    /* 进行下一次注册 */
+    evtimer_add(time_event, &tv);
 }
 
-int getDiskStat()
+int 
+timer::getDiskStat()
 {
     const char* diskstat = "/proc/diskstats";
     std::string line;
@@ -91,7 +97,8 @@ int getDiskStat()
     return 70;
 }
 
-int getNetStat()
+int 
+timer::getNetStat()
 {
     const char *netstat = "/proc/net/dev";
     std::string line;
