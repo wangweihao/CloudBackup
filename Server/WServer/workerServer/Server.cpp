@@ -175,34 +175,41 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
         accumu_size += ret;
     }
 
+    std::cout << "accumu_size:" << accumu_size << std::endl; 
+    std::cout << "file_size:" << file_size << std::endl; 
+
     /* lots of user operating unfinished_file */
- //   std::lock_guard<std::mutex> locker(g_lock);
+    std::lock_guard<std::mutex> locker(g_lock);
 
- //   if(accumu_size == file_size)
- //   {
- //       std::cout << "upload file success" << std::endl;
- //       /* file transfer success, delete unfinished file*/
- //       auto iter = unfinished_file.find(md5);
- //       if(iter != unfinished_file.end())
- //       {
- //           unfinished_file.erase(iter);             
- //       }
- //   }else{
- //       std::cout << "upload file error" << std::endl;
- //       /* 断点续传，用户未上传成功，设置定时事件，
- //        * 若用户在给定时间内没有断点续传，则触发定时事件，
- //        * 删除服务器本地的文件 */
+    if(accumu_size == file_size)
+    {
+        std::cout << "upload file success" << std::endl;
+        /* file transfer success, delete unfinished file*/
+        auto iter = unfinished_file.find(md5);
+        if(iter != unfinished_file.end())
+        {
+            unfinished_file.erase(iter);             
+        }
+    }else{
+      std::cout << "upload file error" << std::endl;
+      /* 断点续传，用户未上传成功，设置定时事件，
+       * 若用户在给定时间内没有断点续传，则触发定时事件，
+       * 删除服务器本地该用户残留的文件 */
 
- //       /* 先考虑某一时刻只有一个用户上传此文件 */
- //       unfinished_file.insert(std::make_pair(md5, 1));
+      /* 先考虑某一时刻只有一个用户上传此文件 */
+      unfinished_file.insert(std::make_pair(md5, 1));
 
- //       /* 设置定时事件 */
- //       struct timeval tv = {300, 0};
- //       struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
- //       event_add(timeout_event, &tv);
+      /* 设置定时事件 */
+      struct timeval tv;
+      tv.tv_sec = 5;
+      tv.tv_usec = 0;
+      struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
+      int t = evtimer_add(timeout_event, &tv);
+      std::cout << "t:" << t << std::endl;
+      std::cout << "time add " << std::endl;
 
- //       return false;
- //   }
+      return false;
+    }
 
     return true;
 }
@@ -280,40 +287,9 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
 /* 多线程下载
  * 将文件均分成多个任务，
  * 加入到任务队列中，
- * 由多个线程处理*/
-bool 
-WorkerServer::multi_thread_download(int socket, std::string md5, long size, long offset, int threadNum)
-{
-    struct stat file_state;
-    
-    /* if file size equal zero, obtain file size */
-    if(size == 0)
-    {
-        if(stat(md5.c_str(), &file_state))
-        {
-            perror("obtain file size error");
-            return false;
-        }
-        size = file_state.st_size;   
-    }
-
-    /* detect thread num */
-    long one_size = size/threadNum;
-    
-    /* block download */
-    for(int i = 0; i < threadNum-1; ++i)
-    {
-        Handler handler = std::make_tuple(WorkerServer::file_block_download, socket, md5, (one_size*i), (one_size*(i+1)), 0);
-        threadpool.AddTask(std::move(handler));
-        
-    }
-    /* 最后一块文件大小需要特殊处理 */
-    Handler handler = std::make_tuple(WorkerServer::file_block_download, socket, md5, (one_size*(threadNum-1)), size, 0);
-    threadpool.AddTask(std::move(handler));
-
-    return true;
-}
-
+ * 由多个线程处理多个 socket
+ * 注意：若线程池线程数满足 threadNum 则 threadNum 个线程下载
+ * 否则，使用剩余线程数进行下载 */
 bool 
 WorkerServer::file_block_download(int socket, std::string md5, long start, long end, int flag)
 {
@@ -395,6 +371,8 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     std::string md5;
     unsigned long size = 0;
     unsigned long offset = 0;
+    unsigned long start = 0;
+    unsigned long end = 0;
     int threadNum = 0;
     
     union Len len;
@@ -452,6 +430,7 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
         return;
     }
 
+
     /* parse json */
     if(reader.parse(buffer, value))
     {
@@ -459,19 +438,27 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
         {
             mark = value["mark"].asInt();
             md5 = value["md5"].asString();
-            size = value["size"].asLargestUInt();
-            offset = value["offset"].asLargestUInt();
             threadNum = value["threadNum"].asInt();
+            if(mark == 3){
+                start = value["start"].asLargestUInt();
+                end = value["end"].asLargestUInt();
+                std::cout << "start:" << start << std::endl;
+                std::cout << "end:" << end << std::endl; 
+            }else{
+                size = value["size"].asLargestUInt();
+                offset = value["offset"].asLargestUInt();
+                /* check argument is correct*/
+                if(detect_paramenter_correct(mark, md5, size, offset, threadNum) == false){
+                    perror("detect parament error");
+                    return;
+                }
+                std::cout << "size:" << size << std::endl;
+                std::cout << "offset:" << offset << std::endl;
+            }
+
             std::cout << "mark:" << mark << std::endl;
             std::cout << "md5:" << md5 << std::endl;
-            std::cout << "size:" << size << std::endl;
-            std::cout << "offset:" << offset << std::endl;
             std::cout << "threadNum:" << threadNum << std::endl;
-  
-            if(detect_paramenter_correct(mark, md5, size, offset, threadNum) == false){
-                perror("detect parament correct error");
-                return;
-            }
   
             /* create handle event */
             Handler handle_event;
@@ -487,7 +474,8 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
                     threadpool.AddTask(std::move(handle_event));
                     break;
                 case 3:
-                    multi_thread_download(socket, md5, size, offset, threadNum);
+                    handle_event = std::make_tuple(WorkerServer::file_block_download, socket, md5, start, end, threadNum);
+                    threadpool.AddTask(std::move(handle_event));
                     break;
                 default:
                   break;
@@ -516,6 +504,7 @@ WorkerServer::error_callback(evutil_socket_t socket, short event, void *arg)
 void
 WorkerServer::timeout_callback(evutil_socket_t socket, short event, void* arg)
 {
+    std::cout << "timeout" << std::endl;
     std::map<std::string, int>::iterator iter;
     std::string md5((char*)arg);
     /* 尽快释放锁，减小粒度 */
@@ -529,6 +518,7 @@ WorkerServer::timeout_callback(evutil_socket_t socket, short event, void* arg)
     }else{
         unfinished_file.erase(iter);
         /* 用户操作超时，删除未完成上传的文件 */
+        std::cout << "timeout delete file" << std::endl;
         remove(md5.c_str());
     }
 }
@@ -543,3 +533,17 @@ bool detect_paramenter_correct(int mark, std::string md5, unsigned long size, un
     }
 }
 
+bool 
+WorkerServer::set_tcp_buf(evutil_socket_t socket, int sock_buf_size)
+{
+    int ret = 0;
+    if((ret = setsockopt(socket, SOL_SOCKET, SO_SNDBUF, (char*)&sock_buf_size, sizeof(sock_buf_size))) == -1){
+        perror("setsockopt send buffer error");
+        return false;
+    }
+    if((ret = setsockopt(socket, SOL_SOCKET, SO_RCVBUF, (char*)&sock_buf_size, sizeof(sock_buf_size))) == -1){
+        perror("setsockopt recv buffer error");
+        return false;
+    }   
+    return true;
+}

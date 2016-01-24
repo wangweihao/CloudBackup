@@ -60,9 +60,7 @@ class WorkerServer{
         static bool handler_upload(int socket, std::string md5, long size, long offset, int threadNum);
         /* file download  (breakpoint download)*/
         static bool handler_download(int socket, std::string md5, long size, long offset, int threadNum);
-        /* multi thread download */
-        static bool multi_thread_download(int socket, std::string md5, long size, long offset, int threadNum);
-        /* file block download */
+        /* file block download (multi thread download)*/
         static bool file_block_download(int socket, std::string md5, long start, long end, int threadNum);
 
     private:
@@ -75,6 +73,9 @@ class WorkerServer{
         /* alloc fd struct */
         static struct fd_state* alloc_fd_state(struct event_base *base, evutil_socket_t fd);
         static void free_fd_state(struct fd_state* state);
+
+        /* set tcp paramenter */
+        static bool set_tcp_buf(evutil_socket_t socket, int sock_buf_size);
 
     private:    
         /* WorkerServer ip and port */
@@ -99,6 +100,11 @@ class WorkerServer{
         static ThreadPool threadpool;
         /* save unfinished file transfer */
         static std::map<std::string, int> unfinished_file;
+};
+
+union Len{
+    char c[2];
+    short length;
 };
 
 bool detect_paramenter_correct(int, std::string, unsigned long, unsigned long, int);
