@@ -21,7 +21,6 @@ struct fd_state*
 WorkerServer::
 alloc_fd_state(struct event_base *base, evutil_socket_t fd)
 {
-    std::cout << "hello world" << std::endl;
     struct fd_state *state = (struct fd_state*)malloc(sizeof(struct fd_state));
     if(state == NULL)
     {
@@ -32,7 +31,6 @@ alloc_fd_state(struct event_base *base, evutil_socket_t fd)
     {
         free(state);
     }
-    std::cout << "hello world" << std::endl;
     return state;
 }
 
@@ -46,7 +44,7 @@ free_fd_state(struct fd_state* state)
 
 
 WorkerServer::
-WorkerServer(std::string w_ip, int w_port, std::string b_ip, int b_port):ip(w_ip), port(w_port)
+WorkerServer(std::string w_ip, int w_port):ip(w_ip), port(w_port)
 {
     int bufSize = 0;
 
@@ -219,8 +217,6 @@ WorkerServer::handler_upload(int socket, std::string md5, long size, long offset
       tv.tv_usec = 0;
       struct event* timeout_event = evtimer_new(base, timeout_callback, (void*)md5.c_str());
       int t = evtimer_add(timeout_event, &tv);
-      std::cout << "t:" << t << std::endl;
-      std::cout << "time add " << std::endl;
 
       return false;
     }
@@ -289,8 +285,7 @@ WorkerServer::handler_download(int socket, std::string md5, long size, long offs
          * close(socket);
          * */
     }else{
-        std::cout << "sendfile error" << std::endl;
-        std::cout << ret << std::endl;
+        std::cout << "sendfile error and ret:" << ret << std::endl;
         return false;
     }
 
@@ -337,7 +332,7 @@ WorkerServer::file_block_download(int socket, std::string md5, long start, long 
 void
 WorkerServer::accept_callback(evutil_socket_t listen_fd, short event, void* arg)
 {
-    std::cout << "收到连接" << std::endl;
+    std::cout << "accept client connect" << std::endl;
 
     struct event *read_event;
     struct event *error_event;
@@ -354,21 +349,19 @@ WorkerServer::accept_callback(evutil_socket_t listen_fd, short event, void* arg)
         perror("accept error");
         return;
     }else{
-        std::cout << "new event" << std::endl;
         struct fd_state *state;
         evutil_make_socket_nonblocking(fd);
         state = alloc_fd_state(base, fd);   
         event_add(state->read_event, 0);
-        std::cout << "fd:" << fd << std::endl;
-        std::cout << "new event.." << std::endl;
     }
 }
 
 void 
 WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
 {
-    struct fd_state* state = (struct fd_state*)(arg);
     std::cout << "read callback" << std::endl;
+    
+    struct fd_state* state = (struct fd_state*)(arg);
     
     /* recv json and return ack then download */
     char *buffer;
@@ -379,7 +372,7 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     /* mark is a flag
      * mark = 1 upload    (breakpoint_upload)
      * mark = 2 download  (breakpoint_download)
-     * mark = 3 multithread download
+     * mark = 3 multithread download (file_block_download)
      * */
     int mark = 0;
     std::string md5;
@@ -403,7 +396,7 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
      *      thread:1,   多线程下载
      * }
      * */
-    /* 先接收 2 字节 json 长度，接着接收 json 串 */
+    /* 先接收 2 字节 json 长度 len，接着接受长度为 len 的 json 串 */
     int ret = recv(socket, jsonMsgLen, 2, MSG_WAITALL);
     if(ret < 0)
     {
@@ -422,8 +415,6 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
         len.length = 0;
         len.c[0] = jsonMsgLen[0];
         len.c[1] = jsonMsgLen[1];
-        printf("%c\n", len.c[0]);
-        printf("%c\n", len.c[1]);
         printf("bufferlength:%d\n", len.length);
     }
     if((buffer = (char*)malloc(sizeof(char) * len.length)) == NULL)
@@ -436,7 +427,6 @@ WorkerServer::read_callback(evutil_socket_t socket, short event, void *arg)
     if((recvnum = recv(socket, buffer, len.length, MSG_WAITALL)) == len.length)
     {
         printf("buffer:%s\n", buffer);
-        printf("recvnum:%d\n", recvnum);
         event_del(state->read_event);
     }else{
         free_fd_state(state);
@@ -519,6 +509,7 @@ void
 WorkerServer::timeout_callback(evutil_socket_t socket, short event, void* arg)
 {
     std::cout << "timeout" << std::endl;
+  
     std::map<std::string, int>::iterator iter;
     std::string md5((char*)arg);
     /* 尽快释放锁，减小粒度 */

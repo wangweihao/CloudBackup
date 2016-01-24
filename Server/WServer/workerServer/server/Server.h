@@ -49,7 +49,7 @@
 class WorkerServer{
     public:
         /* init function */
-        WorkerServer(std::string w_ip, int w_port, std::string b_ip, int b_port);
+        WorkerServer(std::string w_ip, int w_port);
 
         /* free resourse */
         ~WorkerServer();
