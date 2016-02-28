@@ -37,7 +37,14 @@ MainWindow::MainWindow(QMainWindow* parent):QMainWindow(parent)
     projectMenu = new QListWidget;
     projectMenu->setIconSize(QSize(25,25));
     projectMenu->setFrameShape(QListWidget::NoFrame);
-    projectMenu->setStyleSheet("background: #F0FFF0");//F6FAFD
+/*
+    QListWidget::item:selected{
+         background: green;     
+    }
+    */
+    projectMenu->setStyleSheet("QListWidget{background: #F0F8FF;} \ QListWidget::item:selected{background-color:#CFCFCF;color:black;} ");//F6FAFD F0FFF0
+    
+ //   projectMenu->setStyleSheet("QListWidget::item:selected{background-color:red;}");
     projectMenu->setFocusPolicy(Qt::NoFocus); //去掉鼠标选中的虚线框
 
     QListWidgetItem   *item1 = new QListWidgetItem(QIcon(":/image/file.png"),tr("我的文件"));
@@ -59,6 +66,16 @@ MainWindow::MainWindow(QMainWindow* parent):QMainWindow(parent)
     item3->setFont(font);
     item3->setSizeHint(QSize(0,40));
     projectMenu->addItem(item3);
+
+    QListWidgetItem   *itemQuit = new QListWidgetItem;
+    itemQuit->setSizeHint(QSize(0,40));
+    projectMenu->addItem(itemQuit);
+    QPushButton       *quitButton = new QPushButton(tr("退出帐号"));
+    quitButton->setFont(font);
+    quitButton->setFocusPolicy(Qt::NoFocus);
+    quitButton->setStyleSheet("background-color: lawngreen;border:0");
+    connect(quitButton,SIGNAL(clicked()),mainSplitter,SLOT(close()));
+    projectMenu->setItemWidget(itemQuit,quitButton);
 
     stackWidget = new QStackedWidget(this);
     stackWidget->addWidget(fileWidget);
@@ -108,7 +125,15 @@ void MainWindow::ShowMainWindow(QString ip,QString port,int sock,QString sname,Q
     servPort = port;
     sockFd = sock;
     userName = sname;
-
+    string                strjson = sjson.toStdString();
+    string                str;
+    Json::Value           json;
+    Json::Reader          reader;
+    if(reader.parse(strjson,json))
+    {
+        str = json["AllFiles"].asString();
+    }
+    this->fileWidget->EmitShowFilesSig(QString::fromStdString(str));
     pthread_create(&thid,NULL,RecvThread,this);
 }
 
@@ -136,8 +161,16 @@ void* MainWindow::RecvThread(void* arg)
             mark = json["status"].asInt();
         }
         string    strbuf = buf;
+        string    strfolder,strfiles;
         switch(mark)
         {
+            case 3:
+                //发射进入目录信号
+                strfolder = json["Folder"].asString();
+                strfiles = json["AllFiles"].asString();
+                cthis->fileWidget->EmitShowFilesSig(QString::fromStdString(strfiles));
+                cthis->fileWidget->EmitSetFolderSig(QString::fromStdString(strfolder));
+                break;
             case 7:
                 //发射上传文件信号
                 cout<<"recv 7\n";
